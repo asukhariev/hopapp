@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { findPendingForRunner, saveSession } from "@/lib/store";
+import { findPendingForRunner, saveSession, dequeue } from "@/lib/store";
 import { checkRunnerAuth } from "@/lib/auth";
 import type { RunnerCommand } from "@/lib/types";
 
@@ -21,6 +21,7 @@ export async function GET(req: Request) {
     pending.status = "recording";
     pending.progress = "Recording (technician driving MR4)...";
     await saveSession(pending);
+    await dequeue(pending.id);
     const cmd: RunnerCommand = {
       type: "start",
       session_id: pending.id,
@@ -33,9 +34,13 @@ export async function GET(req: Request) {
     pending.status = "exporting";
     pending.progress = "Driving MR4 Export -> CSV...";
     await saveSession(pending);
+    await dequeue(pending.id);
     const cmd: RunnerCommand = { type: "stop", session_id: pending.id };
     return NextResponse.json(cmd);
   }
+
+  // Stale queue entry (session is already past pending_*): clean up
+  await dequeue(pending.id);
 
   const noop: RunnerCommand = { type: "noop" };
   return NextResponse.json(noop);

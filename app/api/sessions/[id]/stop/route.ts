@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession, saveSession } from "@/lib/store";
+import { getSession, saveSession, enqueueStop } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,5 +17,6 @@ export async function POST(
   s.status = "pending_stop";
   s.progress = "Stop requested. Waiting for runner to export...";
   await saveSession(s);
+  await enqueueStop(s.id);
   return NextResponse.json(s);
 }

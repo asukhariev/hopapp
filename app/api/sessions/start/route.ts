@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { nanoid } from "nanoid";
-import { saveSession } from "@/lib/store";
+import { saveSession, enqueueStart } from "@/lib/store";
 import type { Session } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -19,5 +19,6 @@ export async function POST(req: Request) {
     progress: "Waiting for runner to pick up...",
   };
   await saveSession(s);
+  await enqueueStart(s.id);
   return NextResponse.json(s);
 }
