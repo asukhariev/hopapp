@@ -1,4 +1,4 @@
-import { head, put, list } from "@vercel/blob";
+import { put, list } from "@vercel/blob";
 import type { Session } from "./types";
 
 /**
@@ -28,12 +28,18 @@ export async function saveSession(s: Session): Promise<Session> {
 }
 
 export async function getSession(id: string): Promise<Session | null> {
+  // The SDK's head() wants a full URL, not a pathname. Easiest: list with a
+  // tight prefix and filter. One list call per get — fine for v0 throughput.
   try {
-    const meta = await head(key(id), { token: blobToken || undefined });
-    if (!meta?.url) return null;
-    const res = await fetch(meta.url, { cache: "no-store" });
-    if (!res.ok) return null;
-    return (await res.json()) as Session;
+    const { blobs } = await list({
+      prefix: key(id),
+      limit: 1,
+      token: blobToken || undefined,
+    });
+    if (!blobs.length) return null;
+    const r = await fetch(blobs[0].url, { cache: "no-store" });
+    if (!r.ok) return null;
+    return (await r.json()) as Session;
   } catch {
     return null;
   }
