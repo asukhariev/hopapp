@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# hop.agtc.app — HopClaw control plane
 
-## Getting Started
+Web app that drives the Noraxon MR4 export workflow on a remote Windows lab kit via a Node.js runner ([asukhariev/hopclaw](https://github.com/asukhariev/hopclaw)).
 
-First, run the development server:
+## Architecture
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+[browser]  ───▶  hop.agtc.app  ───▶  Vercel Blob (sessions JSON + uploaded files)
+                     ▲                       ▲
+                     │                       │ runner uploads CSV
+                     │ polls every 5s        │ + POSTs status events
+                     │                       │
+                  [runner on EC2 Windows VM with MR4 + OpenClaw]
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Single-runner-per-lab. Polling pattern means no inbound port on the VPS.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Endpoints
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/api/sessions/start` | POST | UI creates a new session |
+| `/api/sessions/[id]/stop` | POST | UI flags it to stop + export |
+| `/api/sessions/[id]` | GET | UI polls a single session |
+| `/api/sessions` | GET | UI list (last 50) |
+| `/api/runner/poll` | GET | Runner asks for the next command |
+| `/api/runner/event` | POST | Runner reports status/progress/file URL |
+| `/api/runner/upload-url` | POST | Runner gets a signed Blob upload URL |
 
-## Learn More
+## Env vars
 
-To learn more about Next.js, take a look at the following resources:
+| Name | Required | What |
+| --- | --- | --- |
+| `BLOB_READ_WRITE_TOKEN` | yes | Vercel Blob token (auto-provisioned when a Blob store is added to the project) |
+| `RUNNER_API_KEY` | recommended | Shared secret. Runner sends as `Authorization: Bearer <value>`. Open auth if unset (v0 only). |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Local dev
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm install
+cp .env.local.example .env.local
+# Fill in BLOB_READ_WRITE_TOKEN and RUNNER_API_KEY
+npm run dev
+```
 
-## Deploy on Vercel
+## Deploy
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Auto-deploys to Vercel on push to `main`. Production: <https://hop.agtc.app>.
