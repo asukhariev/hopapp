@@ -118,7 +118,11 @@ async function readQueue(): Promise<QueueEntry[]> {
 }
 
 async function writeQueue(entries: QueueEntry[]): Promise<void> {
-  const text = entries.map((e) => `${e.id},${e.kind}`).join("\n");
+  // Blob put() rejects empty bodies — write a placeholder newline when the
+  // queue is empty (readQueue trims it back to nothing).
+  const text = entries.length
+    ? entries.map((e) => `${e.id},${e.kind}`).join("\n")
+    : "\n";
   await put(QUEUE_KEY, text, {
     access: "public",
     contentType: "text/plain",
