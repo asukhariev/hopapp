@@ -17,6 +17,20 @@ const QUEUE_KEY = "queue/pending.txt";
 
 const blobToken = process.env.BLOB_READ_WRITE_TOKEN || "";
 
+// Token format: vercel_blob_rw_<STOREID>_<rest>
+// Public blob URL: https://<storeid-lowercase>.public.blob.vercel-storage.com/<pathname>
+// We need this so we can fetch blobs by URL directly (strongly consistent on
+// the object itself), instead of going via list() which has propagation lag.
+function publicBlobBase(): string {
+  const m = blobToken.match(/^vercel_blob_rw_([A-Za-z0-9]+)_/);
+  if (!m) return "";
+  return `https://${m[1].toLowerCase()}.public.blob.vercel-storage.com`;
+}
+
+function blobUrl(pathname: string): string {
+  return `${publicBlobBase()}/${pathname}`;
+}
+
 function key(id: string) {
   return `${PREFIX}${id}.json`;
 }
@@ -34,16 +48,11 @@ export async function saveSession(s: Session): Promise<Session> {
 }
 
 export async function getSession(id: string): Promise<Session | null> {
-  // The SDK's head() wants a full URL, not a pathname. Easiest: list with a
-  // tight prefix and filter. One list call per get — fine for v0 throughput.
+  // Fetch the blob by URL directly — strongly consistent for the object.
   try {
-    const { blobs } = await list({
-      prefix: key(id),
-      limit: 1,
-      token: blobToken || undefined,
-    });
-    if (!blobs.length) return null;
-    const r = await fetch(blobs[0].url, { cache: "no-store" });
+    const url = blobUrl(key(id));
+    if (!url) return null;
+    const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) return null;
     return (await r.json()) as Session;
   } catch {
@@ -89,13 +98,9 @@ type QueueEntry = { id: string; kind: "start" | "stop" };
 
 async function readQueue(): Promise<QueueEntry[]> {
   try {
-    const { blobs } = await list({
-      prefix: QUEUE_KEY,
-      limit: 1,
-      token: blobToken || undefined,
-    });
-    if (!blobs.length) return [];
-    const r = await fetch(blobs[0].url, { cache: "no-store" });
+    const url = blobUrl(QUEUE_KEY);
+    if (!url) return [];
+    const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) return [];
     const text = (await r.text()).trim();
     if (!text) return [];
