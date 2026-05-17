@@ -10,7 +10,15 @@ export async function GET(req: Request) {
   const authErr = checkRunnerAuth(req);
   if (authErr) return authErr;
 
-  const pending = await findPendingForRunner();
+  let pending;
+  try {
+    pending = await findPendingForRunner();
+  } catch (e) {
+    return NextResponse.json(
+      { error: "findPendingForRunner failed", message: e instanceof Error ? e.message : String(e), stack: e instanceof Error ? e.stack : undefined },
+      { status: 500 }
+    );
+  }
   if (!pending) {
     const noop: RunnerCommand = { type: "noop" };
     return NextResponse.json(noop);
