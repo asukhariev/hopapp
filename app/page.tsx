@@ -119,35 +119,66 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Poll the per-session endpoint for the ACTIVE session at higher cadence.
+  // Don't downgrade — only accept polled data if it's newer than what we have.
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    async function pollActive() {
+      try {
+        const r = await fetch(`/api/sessions/${active!.id}`, { cache: "no-store" });
+        if (!r.ok) return;
+        const refreshed = (await r.json()) as Session;
+        if (cancelled) return;
+        setActive((prev) => {
+          if (!prev || prev.id !== refreshed.id) return refreshed;
+          // Monotonic — only update if polled state is strictly newer
+          if (new Date(refreshed.updated_at) >= new Date(prev.updated_at)) {
+            return refreshed;
+          }
+          return prev;
+        });
+      } catch {
+        /* swallow */
+      }
+    }
+    pollActive();
+    const t = setInterval(pollActive, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [active?.id]);
+
+  // Poll the sessions list at lower cadence for the history table only.
   useEffect(() => {
     let cancelled = false;
-    async function tick() {
+    async function pollList() {
       try {
         const r = await fetch("/api/sessions", { cache: "no-store" });
         if (!r.ok) return;
         const { sessions } = (await r.json()) as { sessions: Session[] };
         if (cancelled) return;
         setSessions(sessions);
-        if (active) {
-          const refreshed = sessions.find((s) => s.id === active.id);
-          if (refreshed) setActive(refreshed);
-        } else {
+        // If we have no active session yet, lift one from the list
+        setActive((prev) => {
+          if (prev && !TERMINAL_STATUSES.includes(prev.status)) return prev;
           const inflight = sessions.find(
             (s) => !TERMINAL_STATUSES.includes(s.status)
           );
-          if (inflight) setActive(inflight);
-        }
+          return inflight ?? prev;
+        });
       } catch {
         /* swallow */
       }
     }
-    tick();
-    const t = setInterval(tick, POLL_MS);
+    pollList();
+    const t = setInterval(pollList, POLL_MS * 2); // 4s — half the active rate
     return () => {
       cancelled = true;
       clearInterval(t);
     };
-  }, [active]);
+  }, []);
 
   async function start() {
     setError(null);
@@ -159,7 +190,9 @@ export default function Home() {
         body: JSON.stringify({ device: "emg" }),
       });
       if (!r.ok) throw new Error(await r.text());
-      setActive(await r.json());
+      const fresh = (await r.json()) as Session;
+      // Optimistic — bump updated_at so polling doesn't downgrade
+      setActive({ ...fresh, updated_at: new Date().toISOString() });
     } catch (e) {
       setError(e instanceof Error ? e.message : "start failed");
     } finally {
@@ -174,7 +207,8 @@ export default function Home() {
     try {
       const r = await fetch(`/api/sessions/${active.id}/stop`, { method: "POST" });
       if (!r.ok) throw new Error(await r.text());
-      setActive(await r.json());
+      const fresh = (await r.json()) as Session;
+      setActive({ ...fresh, updated_at: new Date().toISOString() });
     } catch (e) {
       setError(e instanceof Error ? e.message : "stop failed");
     } finally {
