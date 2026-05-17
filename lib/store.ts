@@ -28,7 +28,10 @@ function publicBlobBase(): string {
 }
 
 function blobUrl(pathname: string): string {
-  return `${publicBlobBase()}/${pathname}`;
+  // Cache-buster: Vercel Blob's public CDN caches with very long TTL by default.
+  // We need fresh reads, so each request gets a unique query string.
+  const bust = `t=${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return `${publicBlobBase()}/${pathname}?${bust}`;
 }
 
 function key(id: string) {
@@ -43,6 +46,7 @@ export async function saveSession(s: Session): Promise<Session> {
     allowOverwrite: true,
     token: blobToken || undefined,
     addRandomSuffix: false,
+    cacheControlMaxAge: 0,
   });
   return s;
 }
@@ -118,17 +122,16 @@ async function readQueue(): Promise<QueueEntry[]> {
 }
 
 async function writeQueue(entries: QueueEntry[]): Promise<void> {
-  // Blob put() rejects empty bodies — write a placeholder newline when the
-  // queue is empty (readQueue trims it back to nothing).
   const text = entries.length
     ? entries.map((e) => `${e.id},${e.kind}`).join("\n")
-    : "\n";
+    : "\n"; // empty body rejected; placeholder
   await put(QUEUE_KEY, text, {
     access: "public",
     contentType: "text/plain",
     allowOverwrite: true,
     token: blobToken || undefined,
     addRandomSuffix: false,
+    cacheControlMaxAge: 0,
   });
 }
 
