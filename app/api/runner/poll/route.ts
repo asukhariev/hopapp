@@ -41,6 +41,8 @@ export async function GET(req: Request) {
 
   // Stale queue entry (session is already past pending_*): clean up
   await dequeue(pending.id);
+  const stale: RunnerCommand = { type: "noop" };
+  return NextResponse.json(stale);
 
   const noop: RunnerCommand = { type: "noop" };
   return NextResponse.json(noop);
