@@ -1,27 +1,104 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+@import "material-symbols/outlined.css";
+
+/* Class-based dark mode — toggled by adding `.dark` to <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Tailwind theme: static brand tokens + fonts ─────────────────────────── */
+
+@theme {
+  /* HopLab brand palette — distilled from hoplab.pt */
+  --color-brand-teal: #063a50;
+  --color-brand-coral: #ff6314;
+  --color-brand-blue: #0082f3;
+  --color-brand-cyan: #019eff;
+  --color-brand-cream: #fbfbfb;
+  --color-brand-ink: #101011;
+  --color-brand-soft: #ffdede;
+
+  /* Body / UI text — Satoshi variable across weights 300–900 */
+  --font-sans:
+    "Satoshi", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Display / hero headings — Coolvetica Condensed */
+  --font-display:
+    "Coolvetica Condensed", "Bebas Neue", "Anton", "Oswald", "Arial Narrow",
+    sans-serif;
+
+  /* Monospace — system stack */
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ── Brand fonts ────────────────────────────────────────────────────────── */
+
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Variable.ttf") format("truetype-variations");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-VariableItalic.ttf") format("truetype-variations");
+  font-weight: 300 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Coolvetica Condensed";
+  src: url("/fonts/CoolveticaCondensed.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ── Light/dark page chrome (handled via CSS vars, not Tailwind utils) ───── */
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --page-bg: #fbfbfb; /* HopLab cream */
+  --page-fg: #101011; /* HopLab ink */
+  color-scheme: light;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+.dark {
+  --page-bg: #0a1218; /* deep teal-ink */
+  --page-fg: #fbfbfb;
+  color-scheme: dark;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: var(--page-bg);
+  color: var(--page-fg);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "ss02", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Let Tailwind text-{size} utilities control the Material Symbol size. */
+.material-symbols-outlined {
+  font-size: inherit;
+  line-height: 1;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+}
+
+.material-symbols-outlined.filled {
+  font-variation-settings:
+    "FILL" 1,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
 }

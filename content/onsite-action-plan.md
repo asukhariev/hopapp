@@ -4,7 +4,7 @@
 
 **Date:** 2026-05-23
 **Location:** HOP Studio (Therii PC)
-**Goal:** Walk away with a repeatable Start → Record → Stop → Export → Upload loop on the lab kit. If repeatable without error, we're in a position to talk contract with Joao.
+**Goal:** Walk away with a repeatable Start → Record → Stop → Export → Upload loop on the lab kit, validated against the real Noraxon device and the real technician workflow.
 
 ---
 
@@ -132,7 +132,7 @@ We may need to update `handleStart`/`handleStop` if the technician's workflow ne
 
 - [ ] Does technician want Start button to also click MR4's "Start measure"? (Coordinates for Measure tab live in `scripts/drive-measure.ps1` — already drafted, not yet wired.)
 - [ ] Does Stop need to first stop MR4 recording before exporting? (Probably yes — needs a separate PS script.)
-- [ ] Filename convention — does Joao want `<timestamp>_<subject>_<technician>.csv`? Currently it's whatever MR4 auto-names.
+- [ ] Filename convention — `<timestamp>_<subject>_<technician>.csv` or keep MR4's auto-naming? Confirm on-site. Currently it's whatever MR4 auto-names.
 
 ### Phase 4 — Real export
 
@@ -152,7 +152,7 @@ Repeat Phases 3–5 **at least 3 times back-to-back** without restarting the run
 - MR4 focus loss between cycles
 - Runner crashes (look at the foreground log; if it's bad, switch to nssm service mode per `runner/README.md`)
 
-✅ **Go/no-go for the Joao contract conversation:** 3 successful Start→record→Stop→export→upload cycles in a row, with downloadable valid files at the end, on the actual lab device. If we get there, we're shipping.
+✅ **Go/no-go criterion:** 3 successful Start→record→Stop→export→upload cycles in a row, with downloadable valid files at the end, on the actual lab device.
 
 ---
 
@@ -233,7 +233,6 @@ Before you leave the studio, capture for the post-trip review:
 ```
 Did 3 cycles pass back-to-back, with valid downloadable files?
 ├── YES  →  Set up nssm so the runner survives reboot.
-│          →  Talk contract with Joao.
 │          →  Open v1 backlog: filename convention, auto Start/Stop in MR4,
 │             OpenClaw vision fallback, multi-record export.
 │
@@ -257,3 +256,100 @@ Did 3 cycles pass back-to-back, with valid downloadable files?
 | `interface-map.md` | State machine S0–S10 + visual anchors. Read if coords drift. |
 | `prompts/watch-mr4.md` | Vision-based fallback prompt (not yet active in runner). |
 | `references/*.png` | Ground-truth MR4 screenshots at 1440×900. Compare against PC screenshots if anything looks off. |
+
+---
+
+## 9. How the system works end-to-end (system map)
+
+Three players, one loop. You press a button, the cloud writes it down, the lab PC notices, drives MR4, sends the file back.
+
+<!-- SYSTEM_DIAGRAM -->
+
+### The 9-second lifecycle of one recording
+
+1. **You** press **Start** on `hop.agtc.app` → API creates session `pending_start`.
+2. **Runner** polls (≤5s later), sees `pending_start` → replies, marks itself `recording`.
+3. **You** record the patient in MR4 normally (this is the human + device part).
+4. **You** press **Stop** on `hop.agtc.app` → API flips session to `pending_stop`.
+5. **Runner** polls, sees `pending_stop` → triggers the `HopClawDriveExport` scheduled task.
+6. **Scheduled task** runs `drive-export.ps1` → 10 clicks → MR4 writes the file to `C:\hopclaw\exports\`.
+7. **Runner** asks API for a signed upload URL, PUTs the newest file to **Vercel Blob**.
+8. **Runner** posts `status: done` with the file URL.
+9. **You** see the status pill go green and a download link appears.
+
+### Why it works without opening any inbound port on the PC
+
+The PC only makes **outbound** HTTPS calls (poll + upload). Studio firewalls, captive portals, NAT, and lab IT policies don't care — same shape as the PC checking email. No VPN, no port forwarding, no reverse tunnel. If the PC has internet, the loop works.
+
+### What's NOT in the loop (v0 deliberate omissions)
+
+- **MR4 click-through assumes you (the human) keep MR4 in the foreground** — the script doesn't switch windows; if you Alt-Tab to Chrome mid-export the clicks land in the wrong place.
+- **The 10-click coords are hardcoded for 1440×900** — different resolution = broken. That's why Section 0 is a hard gate.
+- **Auto-Start of MR4 capture is not wired** — technician still hits Record in MR4 by hand between steps 1 and 2 above. Adding it is a v1 task.
+- **OpenClaw vision fallback is dormant** — `prompts/watch-mr4.md` and `interface-map.md` are ready but not invoked yet. They're the safety net for when coords drift.
+
+---
+
+## 10. The safety net — how OpenClaw kicks in when coords drift
+
+Today (v0) the lab PC clicks MR4 at hardcoded screen positions. If anything moves — a Windows update, a different MR4 build, a notification popup — those clicks land in the wrong place and the export fails.
+
+OpenClaw is the fallback: instead of clicking blindly at `(685, 192)`, it **looks at the screen** the way a human does, asks Claude "where's the Export button right now?", and clicks wherever Claude points. It's slower (~2 s per step instead of instant) and costs pennies per cycle, but it survives layout changes.
+
+<!-- OPENCLAW_DIAGRAM -->
+
+### What happens on every loop tick
+
+1. **Watch** — OpenClaw screenshots the MR4 window once every 1–2 seconds.
+2. **Think** — that screenshot goes to Claude with a tight prompt: *"What state is MR4 in? If it's export-ready, where is the Export menu?"*
+3. **Act** — Claude returns a coordinate (or "not yet"). OpenClaw moves the cursor, clicks, types — whatever Claude said to do.
+4. **Report** — log the screenshot, the action, the token cost, the result. If the loop produced a finished file, the runner uploads it just like in v0.
+
+### Why we're not running it today
+
+- **Cost.** Vision calls run ~$0.003 each. At one screenshot every 2 s that's ~$0.10/min idle. The hardcoded-coords path is free.
+- **Speed.** Hardcoded clicks finish in under a second. Vision adds ~2 s per UI step → ~20 s per full export.
+- **Risk control.** v0 only needs one workflow to work reliably. Adding the vision loop on top introduces a second variable while the hardcoded path is still being validated against real hardware.
+
+OpenClaw wakes up when v0 misbehaves three times in a row, or when we deploy the kit to a second clinic on different hardware. The prompt and the interface map are already in the repo (`prompts/watch-mr4.md`, `interface-map.md`) — flipping the switch is one config flag in `runner/index.js`.
+
+---
+
+## 11. Local-first vision stack — going fully on-prem
+
+The OpenClaw fallback in §10 currently assumes the screenshot leaves the lab to hit Anthropic. That's fine for v0 but won't fly in a medical-data context for long. The target architecture is a **tiered local pipeline** where the LLM is the rare fallback, not the steady state.
+
+<!-- VISION_TIERS_DIAGRAM -->
+
+### How each tier covers a different fraction of ticks
+
+- **Tier 0 — Pixel diff.** ~80% of ticks. If <0.1% of pixels changed since the last frame, MR4 is idle — skip everything else. ~3-8 ms.
+- **Tier 1 — Windows UI Automation.** MR4 is a normal Win32 app; Windows exposes its controls programmatically. "Is the Export button visible and focused?" answers in 5-20 ms with zero pixels.
+- **Tier 2 — OpenCV template matching.** Known buttons / dialogs become PNG templates. Match against the current frame. ~20-50 ms.
+- **Tier 3 — Small local VLM.** Florence-2-base or Microsoft OmniParser v2 via ONNX Runtime + DirectML — runs on integrated graphics, ~200-800 ms.
+- **Tier 4 — Larger local VLM (only if dGPU).** Qwen2.5-VL-7B Q4 quantized. ~1-2 s, ~Sonnet-class quality. Skipped if the Therii PC has no discrete GPU.
+- **Tier 5 — Cloud fallback.** Anthropic Haiku. Last-resort safety net; cap at <1% of ticks. Optional — can be omitted for fully on-prem deployments.
+
+### What stays open until Day 1
+
+| # | Decision | Why blocked |
+|---|---|---|
+| 1 | **CPU / RAM / GPU spec of the Therii PC** | Picks the tier-3 model. iGPU-only → Florence-2. RTX 3060+ → Qwen2.5-VL-7B. |
+| 2 | **Final model commitment** | Depends on #1. |
+| 3 | **Tooling layer** (ollama vs llama.cpp vs ONNX + DirectML vs transformers.js) | Depends on #2 and how cleanly we want to embed in the Node runner. |
+| 4 | **Does the clinic allow outbound HTTPS to `api.anthropic.com`?** | If no, Tier 5 is off the table and we commit to full on-prem. |
+
+**Day-1 deliverable on this track:** hardware spec sheet + UIA tree dump for the Therii PC. Model commitment happens *after* that lands, not before.
+
+### Screenshot-capture optimizations (independent of model choice)
+
+Most of the latency win comes from not using the Windows defaults. With a different capture stack the floor is sub-50 ms median.
+
+- **DXGI Desktop Duplication API** or **Windows.Graphics.Capture** instead of `BitBlt` → 6-10× faster capture (5-15 ms vs 30-100 ms).
+- **Crop to the MR4 window** at capture time, not after.
+- **JPEG Q75 via libjpeg-turbo** instead of PNG → 5-10× smaller, faster encode.
+- **Resize to ~768 px wide on capture** — matches typical VLM tile size, cuts model latency proportionally.
+- **Pixel-diff vs last frame** in a fragment shader or numpy → idle ticks cost ~3 ms total.
+
+Full research, model comparison table, and decision matrix lives in the project doc:
+[Local vision stack — research & open questions](https://agtc.app/dashboard/projects/a7e1dec2-354e-426c-9049-0193ec5911cc/docs/37db0719-436f-4aa6-8e12-a1552bb5b792).
