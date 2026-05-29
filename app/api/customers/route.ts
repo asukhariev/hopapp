@@ -4,8 +4,11 @@ import { listCustomers, createCustomer } from "@/lib/store";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  return NextResponse.json({ customers: await listCustomers() });
+export async function GET(req: Request) {
+  const u = new URL(req.url);
+  const limit = Math.min(Number(u.searchParams.get("limit")) || 20, 100);
+  const offset = Number(u.searchParams.get("offset")) || 0;
+  return NextResponse.json({ customers: await listCustomers(limit, offset) });
 }
 
 export async function POST(req: Request) {

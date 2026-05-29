@@ -1,3 +1,5 @@
+import type { Mr4LinkStatus } from "./mr4";
+
 export type StepKind = "lab_runner" | "manual" | "http";
 
 export type StepStatus =
@@ -13,6 +15,13 @@ export type Customer = {
   id: string;
   name: string;
   external_ref: string | null;
+  // MR4 Subject link (see lib/mr4.ts)
+  mr4_code: string | null;
+  mr4_subject_name: string | null;
+  mr4_linked_at: string | null;
+  mr4_proof_url: string | null;
+  mr4_link_status: Mr4LinkStatus | null;
+  mr4_link_error: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -74,6 +83,29 @@ export type RunnerJob =
       config: Record<string, unknown>;
       instructions: string | null;
     };
+
+export type EvaluationType = {
+  id: string;
+  key: string;
+  name: string;
+};
+
+export type Screenshot = {
+  id: string;
+  label: string;
+  url: string;
+  width: number | null;
+  height: number | null;
+  evaluation_step_id: string | null;
+  created_at: string;
+};
+
+/** Per-(customer, analysis-type) view: latest run + all files of that type. */
+export type AnalysisView = {
+  type: EvaluationType;
+  latest: { evaluation: Evaluation; steps: EvaluationStep[] } | null;
+  files: FileRow[];
+};
 
 export const ACTIVE_STEP_STATUS: StepStatus = "active";
 export const TERMINAL_STEP_STATUSES: StepStatus[] = ["done", "failed", "skipped"];

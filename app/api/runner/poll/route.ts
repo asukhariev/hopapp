@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { claimNextRunnerStep } from "@/lib/store";
+import { claimNextRunnerStep, claimNextSubjectJob } from "@/lib/store";
 import { checkRunnerAuth } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -20,6 +20,9 @@ export async function GET(req: Request) {
   const deadline = Date.now() + LONG_POLL_MS;
   try {
     do {
+      // Subject jobs (find/create/select) take priority — they're quick and gate the UI.
+      const subj = await claimNextSubjectJob();
+      if (subj.type !== "noop") return NextResponse.json(subj);
       const job = await claimNextRunnerStep();
       if (job.type !== "noop") return NextResponse.json(job);
       if (req.signal.aborted) break; // runner disconnected — stop early

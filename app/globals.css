@@ -2,8 +2,8 @@
 @plugin "@tailwindcss/typography";
 @import "material-symbols/outlined.css";
 
-/* Class-based dark mode — toggled by adding `.dark` to <html>. */
-@custom-variant dark (&:where(.dark, .dark *));
+/* Dark mode follows the OS preference (Tailwind v4 default: prefers-color-scheme).
+   No JS, no class toggling — the OS is the single source of truth. */
 
 /* ── Tailwind theme: static brand tokens + fonts ─────────────────────────── */
 
@@ -65,10 +65,12 @@
   color-scheme: light;
 }
 
-.dark {
-  --page-bg: #0a1218; /* deep teal-ink */
-  --page-fg: #fbfbfb;
-  color-scheme: dark;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page-bg: #0a1218; /* deep teal-ink */
+    --page-fg: #fbfbfb;
+    color-scheme: dark;
+  }
 }
 
 html,

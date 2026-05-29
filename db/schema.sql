@@ -11,6 +11,18 @@ create table if not exists customers (
   updated_at   timestamptz not null default now()
 );
 
+-- MR4 Subject link: each customer maps to a Noraxon MR4 "Subject" whose display
+-- name embeds a short unique code (mr4_code) so we can match it back to this row.
+-- Matching happens in MR4's UI type-ahead, not against MR4's internal ids.
+alter table customers add column if not exists mr4_code         text;        -- 6 hex, unique; embedded in the MR4 subject name
+alter table customers add column if not exists mr4_subject_name text;        -- exact "first name" string written into MR4 (set on link)
+alter table customers add column if not exists mr4_linked_at    timestamptz; -- when the subject was confirmed/created in MR4
+alter table customers add column if not exists mr4_proof_url    text;        -- screenshot proving the subject exists in MR4
+alter table customers add column if not exists mr4_link_status  text;        -- null | checking | not_found | linking | selecting | failed
+alter table customers add column if not exists mr4_link_error   text;
+alter table customers add column if not exists mr4_claimed_at   timestamptz; -- runner claim (prevents double-processing a pending job)
+create unique index if not exists idx_customers_mr4_code on customers(mr4_code);
+
 -- ── Template: evaluation types + step catalog + the ordered-steps join ───────
 create table if not exists evaluation_types (
   id         text primary key,
@@ -83,16 +95,30 @@ create table if not exists files (
 );
 create index if not exists idx_files_customer on files(customer_id, created_at desc);
 
--- ── Seed: one evaluation type with a single MR4-export step (the current flow) ─
-insert into evaluation_types (id, key, name)
-values ('default', 'default', 'Lab Evaluation')
-on conflict (key) do nothing;
+-- ── Workflow screenshots (captures from each automation step; bytes in Blob) ──
+create table if not exists screenshots (
+  id                 text primary key,
+  label              text not null,
+  url                text not null,
+  width              int,
+  height             int,
+  evaluation_step_id text references evaluation_steps(id) on delete set null,
+  created_at         timestamptz not null default now()
+);
+create index if not exists idx_screenshots_created on screenshots(created_at desc);
 
+-- ── Seed: the two fixed video analyses, each a single MR4-export step ─────────
 insert into step_definitions (id, key, name, kind, config)
 values ('mr4_export', 'mr4_export', 'MR4 Export', 'lab_runner',
         '{"action":"mr4_export","device":"emg"}'::jsonb)
 on conflict (key) do nothing;
 
-insert into evaluation_type_steps (evaluation_type_id, step_definition_id, seq, instructions)
-values ('default', 'mr4_export', 1, 'Export the latest MR4 recording and upload it.')
+insert into evaluation_types (id, key, name) values
+  ('gait-left',    'gait-left',    'Video Gait Analysis — Left Side'),
+  ('running-left', 'running-left', 'Video Running Analysis — Left Side First')
+on conflict (key) do nothing;
+
+insert into evaluation_type_steps (evaluation_type_id, step_definition_id, seq, instructions) values
+  ('gait-left',    'mr4_export', 1, 'Run the MR4 export for the left-side gait recording and upload it.'),
+  ('running-left', 'mr4_export', 1, 'Run the MR4 export for the left-side-first running recording and upload it.')
 on conflict (evaluation_type_id, seq) do nothing;
