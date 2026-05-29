@@ -9,11 +9,12 @@
 // we match on: typing it into MR4's subject type-ahead resolves to exactly one
 // subject (or none → create). The display name is cosmetic; the code is law.
 
-// checking  — runner is reading MR4's subject store for our code (fast, no UI)
+// checking  — runner is locating the subject in MR4 (find)
+// selecting — runner is selecting the subject in MR4's UI
 // not_found — checked, the subject isn't in MR4 yet → offer "Create & link"
 // linking   — runner is driving MR4 to create the subject
-// failed    — the find or create attempt errored
-export type Mr4LinkStatus = "checking" | "not_found" | "linking" | "failed";
+// failed    — the find / select / create attempt errored
+export type Mr4LinkStatus = "checking" | "selecting" | "not_found" | "linking" | "failed";
 
 /** Customer is confirmed present in MR4 (our record is the source of truth). */
 export function isWired(c: { mr4_linked_at: string | null }): boolean {

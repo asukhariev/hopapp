@@ -91,6 +91,7 @@ export type SubjectJob =
       name: string;
       mr4_code: string | null;
       subject_name: string;
+      already_linked: boolean;
     };
 
 /** Atomically claim the next pending customer subject-job (or noop). */
@@ -105,12 +106,13 @@ export async function claimNextSubjectJob(): Promise<SubjectJob> {
       limit 1
       for update skip locked
     )
-    returning id, name, mr4_code, mr4_subject_name, mr4_link_status`) as {
+    returning id, name, mr4_code, mr4_subject_name, mr4_link_status, mr4_linked_at`) as {
     id: string;
     name: string;
     mr4_code: string | null;
     mr4_subject_name: string | null;
     mr4_link_status: string;
+    mr4_linked_at: string | null;
   }[];
   const c = rows[0];
   if (!c) return { type: "noop" };
@@ -123,6 +125,7 @@ export async function claimNextSubjectJob(): Promise<SubjectJob> {
     name: c.name,
     mr4_code: c.mr4_code,
     subject_name: c.mr4_subject_name ?? intendedMr4SubjectName(c.name, c.mr4_code),
+    already_linked: c.mr4_linked_at != null,
   };
 }
 

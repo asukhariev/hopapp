@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Customer, EvaluationType } from "@/lib/types";
-import { intendedMr4SubjectName, isWired } from "@/lib/mr4";
+import { intendedMr4SubjectName } from "@/lib/mr4";
 
 async function fetchCustomer(id: string): Promise<Customer> {
   const r = await fetch(`/api/customers/${id}`, { cache: "no-store" });
@@ -12,10 +12,9 @@ async function fetchCustomer(id: string): Promise<Customer> {
   return (await r.json()).customer as Customer;
 }
 
-// Patient screen: live MR4 link state + evaluations gated on it.
-//  - opening auto-triggers a find (runner reads MR4's store for our code)
-//  - "wired" shows instantly for already-linked patients and enables evaluations
-//  - "not_found" shows the Create & link action
+// Patient screen. Opening ALWAYS re-checks MR4: the runner finds the subject and
+// selects it in the MR4 UI. Only once that's confirmed do we show "Wired" and
+// unlock evaluations — so "wired" always means "selected in MR4 right now".
 export default function PatientWorkspace({
   customer: initial,
   types,
@@ -30,15 +29,16 @@ export default function PatientWorkspace({
     queryKey: ["customer", id],
     queryFn: () => fetchCustomer(id),
     initialData: initial,
-    // Poll only while the runner is mid-flight; stop once resolved.
     refetchInterval: (q) => {
       const s = q.state.data?.mr4_link_status;
-      return s === "checking" || s === "linking" ? 1500 : false;
+      return s === "checking" || s === "selecting" || s === "linking" ? 1200 : false;
     },
   });
 
-  const wired = isWired(customer);
   const status = customer.mr4_link_status;
+  const inFlight = status === "checking" || status === "selecting" || status === "linking";
+  // Ready = confirmed present AND selected in MR4 on this open (not mid-check).
+  const ready = !!customer.mr4_linked_at && !inFlight;
   const subjectName = intendedMr4SubjectName(customer.name, customer.mr4_code);
 
   async function post(path: string) {
@@ -46,12 +46,11 @@ export default function PatientWorkspace({
     await qc.invalidateQueries({ queryKey: ["customer", id] });
   }
 
-  // On open: if not wired and nothing in flight, kick a live find. Runs once
-  // per mount (the filesystem check is cheap and doesn't drive the MR4 UI).
+  // On open: always re-check + select in MR4 (unless a job is already running).
   const kicked = useRef(false);
   useEffect(() => {
     if (kicked.current) return;
-    if (!wired && status !== "checking" && status !== "linking") {
+    if (!inFlight) {
       kicked.current = true;
       post("mr4-find");
     }
@@ -65,12 +64,12 @@ export default function PatientWorkspace({
       </h2>
       <section className="mb-8">
         <Mr4Panel
-          wired={wired}
+          inFlight={inFlight}
           status={status}
+          ready={ready}
           subjectName={subjectName}
           subjectStored={customer.mr4_subject_name}
           linkedAt={customer.mr4_linked_at}
-          proofUrl={customer.mr4_proof_url}
           error={customer.mr4_link_error}
           onCreate={() => post("mr4-link")}
           onRecheck={() => post("mr4-find")}
@@ -82,7 +81,7 @@ export default function PatientWorkspace({
       </h2>
       <div className="grid gap-3">
         {types.map((t) =>
-          wired ? (
+          ready ? (
             <Link
               key={t.key}
               href={`/customers/${id}/analysis/${t.key}`}
@@ -95,22 +94,20 @@ export default function PatientWorkspace({
             <div
               key={t.key}
               aria-disabled
-              title="Wire this subject in MR4 to run evaluations"
+              title="The subject must be found & selected in MR4 first"
               className="flex items-center justify-between rounded-xl border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02] px-5 py-4 opacity-50 cursor-not-allowed select-none"
             >
               <span className="font-medium">{t.name}</span>
-              <span className="material-symbols-outlined text-lg text-black/40 dark:text-white/40">
-                lock
-              </span>
+              <span className="material-symbols-outlined text-lg text-black/40 dark:text-white/40">lock</span>
             </div>
           )
         )}
         {types.length === 0 && (
           <p className="text-black/45 dark:text-white/45 text-sm">No analyses configured.</p>
         )}
-        {!wired && types.length > 0 && (
+        {!ready && types.length > 0 && (
           <p className="mt-1 text-xs text-black/45 dark:text-white/45">
-            Evaluations unlock once the subject is wired to Noraxon MR4.
+            Evaluations unlock once the subject is found &amp; selected in Noraxon MR4.
           </p>
         )}
       </div>
@@ -119,60 +116,39 @@ export default function PatientWorkspace({
 }
 
 function Mr4Panel({
-  wired,
+  inFlight,
   status,
+  ready,
   subjectName,
   subjectStored,
   linkedAt,
-  proofUrl,
   error,
   onCreate,
   onRecheck,
 }: {
-  wired: boolean;
+  inFlight: boolean;
   status: Customer["mr4_link_status"];
+  ready: boolean;
   subjectName: string;
   subjectStored: string | null;
   linkedAt: string | null;
-  proofUrl: string | null;
   error: string | null;
   onCreate: () => void;
   onRecheck: () => void;
 }) {
-  if (wired) {
-    return (
-      <div className="rounded-xl border border-emerald-600/30 bg-emerald-500/[0.07] px-5 py-4">
-        <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 font-medium">
-          <span className="material-symbols-outlined filled text-xl">check_circle</span>
-          Wired to Noraxon MR4
-        </div>
-        <p className="mt-2 font-mono text-sm break-all">{subjectStored ?? subjectName}</p>
-        {linkedAt && (
-          <p className="mt-1 text-xs text-black/45 dark:text-white/45">
-            Linked {new Date(linkedAt).toLocaleString()}
-          </p>
-        )}
-        {proofUrl && (
-          <a
-            href={proofUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-3 inline-flex items-center gap-1 text-sm text-brand-blue hover:underline"
-          >
-            <span className="material-symbols-outlined text-base">image</span>
-            View proof screenshot
-          </a>
-        )}
-      </div>
-    );
-  }
-
-  if (status === "checking" || status === "linking") {
+  // In-flight: the runner is finding/selecting/creating in MR4.
+  if (inFlight) {
+    const label =
+      status === "linking"
+        ? "Creating in Noraxon MR4…"
+        : status === "selecting"
+          ? "Selecting in Noraxon MR4…"
+          : "Checking Noraxon MR4…";
     return (
       <div className="rounded-xl border border-amber-500/30 bg-amber-400/[0.08] px-5 py-4">
         <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 font-medium">
           <span className="material-symbols-outlined text-xl animate-spin">progress_activity</span>
-          {status === "checking" ? "Checking Noraxon MR4…" : "Creating in Noraxon MR4…"}
+          {label}
         </div>
         <p className="mt-2 font-mono text-sm break-all">{subjectName}</p>
         <p className="mt-1 text-xs text-black/45 dark:text-white/45">
@@ -182,7 +158,25 @@ function Mr4Panel({
     );
   }
 
-  // not_found / failed / unknown → offer Create & link
+  // Confirmed found + selected in MR4 this open.
+  if (ready) {
+    return (
+      <div className="rounded-xl border border-emerald-600/30 bg-emerald-500/[0.07] px-5 py-4">
+        <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 font-medium">
+          <span className="material-symbols-outlined filled text-xl">check_circle</span>
+          Wired &amp; selected in Noraxon MR4
+        </div>
+        <p className="mt-2 font-mono text-sm break-all">{subjectStored ?? subjectName}</p>
+        {linkedAt && (
+          <p className="mt-1 text-xs text-black/45 dark:text-white/45">
+            Last confirmed {new Date(linkedAt).toLocaleString()}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // not_found / failed → offer Create & link.
   const failed = status === "failed";
   return (
     <div
@@ -199,7 +193,7 @@ function Mr4Panel({
         </div>
       ) : (
         <p className="text-sm text-black/55 dark:text-white/55">
-          Not yet in the Noraxon MR4 software. Will be created as:
+          Not in the Noraxon MR4 software. Will be created as:
         </p>
       )}
 
