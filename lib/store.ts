@@ -57,17 +57,16 @@ async function ensureMr4Code(customerId: string): Promise<void> {
   }
 }
 
-/** Queue a live "is this subject in MR4?" check — the runner reads MR4's store. */
+/** Queue a live re-check on EVERY open (incl. already-linked) — runner verifies
+ *  the subject is in MR4 and selects it; only then does the page show "wired". */
 export async function requestMr4Find(customerId: string): Promise<Customer | null> {
   await ensureMr4Code(customerId);
   const rows = (await sql`
     update customers
     set mr4_link_status = 'checking', mr4_link_error = null, mr4_claimed_at = null, updated_at = now()
-    where id = ${customerId} and mr4_linked_at is null
+    where id = ${customerId}
     returning *`) as Customer[];
-  if (rows[0]) return rows[0];
-  // Already linked (or missing) — return current row unchanged.
-  return getCustomer(customerId);
+  return rows[0] ?? null;
 }
 
 /** Queue a "create & link this subject in MR4" job — the runner drives the UI. */
