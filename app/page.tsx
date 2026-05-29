@@ -38,12 +38,14 @@ export default function Home() {
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12 font-sans text-slate-100">
+    <main className="mx-auto max-w-2xl px-6 py-12">
       <header className="mb-8">
         <h1 className="text-3xl font-semibold tracking-tight">
-          HopLab <span className="text-slate-400 font-normal">/ Users</span>
+          HopLab <span className="text-brand-coral">Users</span>
         </h1>
-        <p className="mt-2 text-slate-400">Create a user, then run evaluations on the lab kit.</p>
+        <p className="mt-1 text-black/55 dark:text-white/55">
+          Create a user, then run evaluations on the lab kit.
+        </p>
       </header>
 
       <form onSubmit={create} className="flex gap-3 mb-8">
@@ -51,29 +53,31 @@ export default function Home() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="New user name"
-          className="flex-1 rounded-lg bg-slate-900 border border-slate-800 px-4 py-2 outline-none focus:border-slate-600"
+          className="flex-1 rounded-lg border border-black/15 dark:border-white/20 bg-transparent px-4 py-2 outline-none placeholder:text-black/40 dark:placeholder:text-white/40 focus:border-brand-blue"
         />
         <button
           disabled={busy || !name.trim()}
-          className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 px-5 py-2 font-medium transition-colors"
+          className="rounded-lg bg-brand-coral text-white px-5 py-2 font-medium hover:opacity-90 disabled:opacity-40 transition-opacity"
         >
           Create
         </button>
       </form>
 
-      <h2 className="text-sm uppercase tracking-wider text-slate-400 mb-3">Users</h2>
-      <ul className="divide-y divide-slate-800 rounded-lg border border-slate-800 overflow-hidden">
+      <h2 className="text-xs font-semibold uppercase tracking-wider text-black/50 dark:text-white/50 mb-3">
+        Users
+      </h2>
+      <ul className="rounded-xl border border-black/10 dark:border-white/10 overflow-hidden divide-y divide-black/10 dark:divide-white/10">
         {customers.length === 0 && (
-          <li className="px-4 py-6 text-slate-500 text-sm">No users yet.</li>
+          <li className="px-4 py-6 text-black/45 dark:text-white/45 text-sm">No users yet.</li>
         )}
         {customers.map((c) => (
           <li key={c.id}>
             <Link
               href={`/customers/${c.id}`}
-              className="flex items-center justify-between px-4 py-3 hover:bg-slate-900/50 transition-colors"
+              className="flex items-center justify-between px-4 py-3 hover:bg-black/[0.03] dark:hover:bg-white/[0.06] transition-colors"
             >
-              <span>{c.name}</span>
-              <span className="text-xs text-slate-500 font-mono">{c.id}</span>
+              <span className="font-medium">{c.name}</span>
+              <span className="text-xs text-black/40 dark:text-white/40 font-mono">{c.id}</span>
             </Link>
           </li>
         ))}

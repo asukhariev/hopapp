@@ -43,34 +43,36 @@ export default function CustomerPage() {
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12 font-sans text-slate-100">
-      <Link href="/" className="text-sm text-slate-400 hover:text-slate-200">
+    <main className="mx-auto max-w-2xl px-6 py-12">
+      <Link href="/" className="text-sm text-brand-blue hover:underline">
         ← Users
       </Link>
-      <header className="mt-3 mb-8 flex items-center justify-between">
+      <header className="mt-3 mb-8 flex items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold">{customer?.name ?? "…"}</h1>
         <button
           onClick={startEvaluation}
           disabled={busy}
-          className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 px-4 py-2 font-medium transition-colors"
+          className="shrink-0 rounded-lg bg-brand-coral text-white px-4 py-2 font-medium hover:opacity-90 disabled:opacity-40 transition-opacity"
         >
           {busy ? "Starting…" : "New evaluation"}
         </button>
       </header>
 
-      <h2 className="text-sm uppercase tracking-wider text-slate-400 mb-3">Evaluations</h2>
-      <ul className="divide-y divide-slate-800 rounded-lg border border-slate-800 overflow-hidden">
+      <h2 className="text-xs font-semibold uppercase tracking-wider text-black/50 dark:text-white/50 mb-3">
+        Evaluations
+      </h2>
+      <ul className="rounded-xl border border-black/10 dark:border-white/10 overflow-hidden divide-y divide-black/10 dark:divide-white/10">
         {evaluations.length === 0 && (
-          <li className="px-4 py-6 text-slate-500 text-sm">No evaluations yet.</li>
+          <li className="px-4 py-6 text-black/45 dark:text-white/45 text-sm">No evaluations yet.</li>
         )}
         {evaluations.map((e) => (
           <li key={e.id}>
             <Link
               href={`/evaluations/${e.id}`}
-              className="flex items-center justify-between px-4 py-3 hover:bg-slate-900/50 transition-colors"
+              className="flex items-center justify-between px-4 py-3 hover:bg-black/[0.03] dark:hover:bg-white/[0.06] transition-colors"
             >
-              <span className="capitalize">{e.status.replace("_", " ")}</span>
-              <span className="text-xs text-slate-500">
+              <span className="font-medium capitalize">{e.status.replace("_", " ")}</span>
+              <span className="text-xs text-black/40 dark:text-white/40">
                 {new Date(e.created_at).toLocaleString()}
               </span>
             </Link>
