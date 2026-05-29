@@ -1,158 +1,210 @@
-import { put, list, del } from "@vercel/blob";
-import type { Session } from "./types";
+import { neon } from "@neondatabase/serverless";
+import { nanoid } from "nanoid";
+import type {
+  Customer,
+  Evaluation,
+  EvaluationDetail,
+  EvaluationStep,
+  FileRow,
+  RunnerJob,
+} from "./types";
 
+const sql = neon(process.env.DATABASE_URL!);
+
+// ── Customers ────────────────────────────────────────────────────────────────
+export async function createCustomer(name: string, externalRef?: string): Promise<Customer> {
+  const id = nanoid(12);
+  const rows = (await sql`
+    insert into customers (id, name, external_ref)
+    values (${id}, ${name}, ${externalRef ?? null})
+    returning *`) as Customer[];
+  return rows[0];
+}
+
+export async function listCustomers(limit = 200): Promise<Customer[]> {
+  return (await sql`
+    select * from customers order by created_at desc limit ${limit}`) as Customer[];
+}
+
+export async function getCustomer(id: string): Promise<Customer | null> {
+  const rows = (await sql`select * from customers where id = ${id}`) as Customer[];
+  return rows[0] ?? null;
+}
+
+// ── Evaluations ───────────────────────────────────────────────────────────────
 /**
- * Session storage backed by Vercel Blob (one JSON file per session).
- * Keys: sessions/<id>.json
- *
- * Plus a known "queue" blob at queue/pending.txt holding the IDs of sessions
- * the runner still needs to act on (one per line, suffixed with their stage).
- * We use this instead of list() because Blob's list endpoint has propagation
- * lag — recently-written sessions don't appear there for several seconds,
- * which breaks the runner's poll loop.
+ * Create an evaluation for a customer from a type's step recipe. Snapshots the
+ * template steps into evaluation_steps and activates the first one.
  */
+export async function createEvaluation(
+  customerId: string,
+  typeKey = "default"
+): Promise<Evaluation> {
+  const typeRows = (await sql`
+    select id from evaluation_types where key = ${typeKey}`) as { id: string }[];
+  const type = typeRows[0];
+  if (!type) throw new Error(`evaluation type '${typeKey}' not found`);
 
-const PREFIX = "sessions/";
-const QUEUE_KEY = "queue/pending.txt";
+  const template = (await sql`
+    select ets.step_definition_id, ets.seq, ets.instructions, d.kind, d.config
+    from evaluation_type_steps ets
+    join step_definitions d on d.id = ets.step_definition_id
+    where ets.evaluation_type_id = ${type.id}
+    order by ets.seq`) as {
+    step_definition_id: string;
+    seq: number;
+    instructions: string | null;
+    kind: string;
+    config: Record<string, unknown>;
+  }[];
 
-const blobToken = process.env.BLOB_READ_WRITE_TOKEN || "";
-
-// Token format: vercel_blob_rw_<STOREID>_<rest>
-// Public blob URL: https://<storeid-lowercase>.public.blob.vercel-storage.com/<pathname>
-// We need this so we can fetch blobs by URL directly (strongly consistent on
-// the object itself), instead of going via list() which has propagation lag.
-function publicBlobBase(): string {
-  const m = blobToken.match(/^vercel_blob_rw_([A-Za-z0-9]+)_/);
-  if (!m) return "";
-  return `https://${m[1].toLowerCase()}.public.blob.vercel-storage.com`;
-}
-
-function blobUrl(pathname: string): string {
-  // Cache-buster: Vercel Blob's public CDN caches with very long TTL by default.
-  // We need fresh reads, so each request gets a unique query string.
-  const bust = `t=${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  return `${publicBlobBase()}/${pathname}?${bust}`;
-}
-
-function key(id: string) {
-  return `${PREFIX}${id}.json`;
-}
-
-export async function saveSession(s: Session): Promise<Session> {
-  s.updated_at = new Date().toISOString();
-  await put(key(s.id), JSON.stringify(s, null, 2), {
-    access: "public",
-    contentType: "application/json",
-    allowOverwrite: true,
-    token: blobToken || undefined,
-    addRandomSuffix: false,
-    cacheControlMaxAge: 0,
+  const evaluationId = nanoid(12);
+  const queries = [
+    sql`insert into evaluations (id, customer_id, evaluation_type_id, status)
+        values (${evaluationId}, ${customerId}, ${type.id}, 'in_progress')`,
+  ];
+  template.forEach((s, i) => {
+    queries.push(sql`
+      insert into evaluation_steps
+        (id, evaluation_id, step_definition_id, seq, kind, config, instructions, status)
+      values (${nanoid(12)}, ${evaluationId}, ${s.step_definition_id}, ${s.seq},
+              ${s.kind}, ${JSON.stringify(s.config ?? {})}::jsonb, ${s.instructions},
+              ${i === 0 ? "active" : "pending"})`);
   });
-  return s;
+  await sql.transaction(queries);
+
+  const rows = (await sql`select * from evaluations where id = ${evaluationId}`) as Evaluation[];
+  return rows[0];
 }
 
-export async function getSession(id: string): Promise<Session | null> {
-  // Fetch the blob by URL directly — strongly consistent for the object.
-  try {
-    const url = blobUrl(key(id));
-    if (!url) return null;
-    const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) return null;
-    return (await r.json()) as Session;
-  } catch {
-    return null;
+export async function listEvaluations(customerId: string): Promise<Evaluation[]> {
+  return (await sql`
+    select * from evaluations where customer_id = ${customerId}
+    order by created_at desc`) as Evaluation[];
+}
+
+export async function getEvaluation(id: string): Promise<EvaluationDetail | null> {
+  const evRows = (await sql`select * from evaluations where id = ${id}`) as Evaluation[];
+  const evaluation = evRows[0];
+  if (!evaluation) return null;
+  const steps = (await sql`
+    select * from evaluation_steps where evaluation_id = ${id} order by seq`) as EvaluationStep[];
+  const files = (await sql`
+    select * from files where evaluation_id = ${id} order by created_at desc`) as FileRow[];
+  return { evaluation, steps, files };
+}
+
+// ── Runner: claim a job + report back ─────────────────────────────────────────
+/** Atomically claim the next active, unclaimed lab_runner step (or noop). */
+export async function claimNextRunnerStep(): Promise<RunnerJob> {
+  const rows = (await sql`
+    update evaluation_steps
+    set claimed_at = now(), started_at = coalesce(started_at, now()), updated_at = now()
+    where id = (
+      select id from evaluation_steps
+      where status = 'active' and kind = 'lab_runner' and claimed_at is null
+      order by created_at
+      limit 1
+      for update skip locked
+    )
+    returning id, evaluation_id, config, instructions`) as {
+    id: string;
+    evaluation_id: string;
+    config: Record<string, unknown> | null;
+    instructions: string | null;
+  }[];
+  const step = rows[0];
+  if (!step) return { type: "noop" };
+  const config = step.config ?? {};
+  return {
+    type: "step",
+    step_id: step.id,
+    evaluation_id: step.evaluation_id,
+    action: (config.action as string) ?? "unknown",
+    config,
+    instructions: step.instructions,
+  };
+}
+
+export async function setStepProgress(stepId: string, progress: string): Promise<void> {
+  await sql`
+    update evaluation_steps set progress = ${progress}, updated_at = now() where id = ${stepId}`;
+}
+
+/** Mark a step done, attach result, and activate the next step (or finish the evaluation). */
+export async function completeStep(
+  stepId: string,
+  opts: { result?: Record<string, unknown>; progress?: string } = {}
+): Promise<void> {
+  const doneRows = (await sql`
+    update evaluation_steps
+    set status = 'done', progress = ${opts.progress ?? "Done"},
+        result = ${opts.result ? JSON.stringify(opts.result) : null}::jsonb,
+        finished_at = now(), updated_at = now()
+    where id = ${stepId}
+    returning evaluation_id`) as { evaluation_id: string }[];
+  const done = doneRows[0];
+  if (!done) return;
+
+  const nextRows = (await sql`
+    update evaluation_steps
+    set status = 'active', updated_at = now()
+    where id = (
+      select id from evaluation_steps
+      where evaluation_id = ${done.evaluation_id} and status = 'pending'
+      order by seq limit 1
+    )
+    returning id`) as { id: string }[];
+
+  if (nextRows.length === 0) {
+    await sql`
+      update evaluations set status = 'done', updated_at = now()
+      where id = ${done.evaluation_id}`;
   }
 }
 
-export async function listSessions(limit = 50): Promise<Session[]> {
-  const { blobs } = await list({
-    prefix: PREFIX,
-    limit,
-    token: blobToken || undefined,
-  });
-  const sessions = await Promise.all(
-    blobs.map(async (b) => {
-      try {
-        const r = await fetch(b.url, { cache: "no-store" });
-        if (!r.ok) return null;
-        return (await r.json()) as Session;
-      } catch {
-        return null;
-      }
-    })
-  );
-  return sessions
-    .filter((s): s is Session => !!s)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
-}
-
-export async function findPendingForRunner(): Promise<Session | null> {
-  // Read the explicit queue blob — strongly consistent on direct fetch,
-  // unlike list() which has propagation lag.
-  const ids = await readQueue();
-  // Stop takes priority over Start so a Stop click cuts in
-  const stopId = ids.find((e) => e.kind === "stop")?.id;
-  const startId = ids.find((e) => e.kind === "start")?.id;
-  const id = stopId ?? startId ?? null;
-  if (!id) return null;
-  return await getSession(id);
-}
-
-type QueueEntry = { id: string; kind: "start" | "stop" };
-
-async function readQueue(): Promise<QueueEntry[]> {
-  try {
-    const url = blobUrl(QUEUE_KEY);
-    if (!url) return [];
-    const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) return [];
-    const text = (await r.text()).trim();
-    if (!text) return [];
-    return text
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const [id, kind] = line.split(",");
-        return { id, kind: kind as "start" | "stop" };
-      });
-  } catch {
-    return [];
+export async function failStep(stepId: string, error: string): Promise<void> {
+  const rows = (await sql`
+    update evaluation_steps
+    set status = 'failed', progress = ${error},
+        result = jsonb_build_object('error', ${error}::text),
+        finished_at = now(), updated_at = now()
+    where id = ${stepId}
+    returning evaluation_id`) as { evaluation_id: string }[];
+  if (rows[0]) {
+    await sql`
+      update evaluations set status = 'failed', updated_at = now()
+      where id = ${rows[0].evaluation_id}`;
   }
 }
 
-async function writeQueue(entries: QueueEntry[]): Promise<void> {
-  const text = entries.length
-    ? entries.map((e) => `${e.id},${e.kind}`).join("\n")
-    : "\n"; // empty body rejected; placeholder
-  await put(QUEUE_KEY, text, {
-    access: "public",
-    contentType: "text/plain",
-    allowOverwrite: true,
-    token: blobToken || undefined,
-    addRandomSuffix: false,
-    cacheControlMaxAge: 0,
-  });
+export async function getStep(stepId: string): Promise<EvaluationStep | null> {
+  const rows = (await sql`
+    select * from evaluation_steps where id = ${stepId}`) as EvaluationStep[];
+  return rows[0] ?? null;
 }
 
-export async function enqueueStart(id: string): Promise<void> {
-  const q = await readQueue();
-  // Replace any prior entry for this id with a fresh start
-  const filtered = q.filter((e) => e.id !== id);
-  filtered.push({ id, kind: "start" });
-  await writeQueue(filtered);
-}
-
-export async function enqueueStop(id: string): Promise<void> {
-  const q = await readQueue();
-  const filtered = q.filter((e) => e.id !== id);
-  filtered.push({ id, kind: "stop" });
-  await writeQueue(filtered);
-}
-
-export async function dequeue(id: string): Promise<void> {
-  const q = await readQueue();
-  const filtered = q.filter((e) => e.id !== id);
-  if (filtered.length === q.length) return;
-  await writeQueue(filtered);
+// ── Files (rows here; bytes live in Vercel Blob) ──────────────────────────────
+export async function addFile(args: {
+  evaluationStepId: string;
+  url: string;
+  name: string;
+  sizeBytes?: number;
+}): Promise<FileRow> {
+  const ctx = (await sql`
+    select es.evaluation_id, ev.customer_id
+    from evaluation_steps es
+    join evaluations ev on ev.id = es.evaluation_id
+    where es.id = ${args.evaluationStepId}`) as {
+    evaluation_id: string;
+    customer_id: string;
+  }[];
+  if (!ctx[0]) throw new Error("evaluation_step not found");
+  const id = nanoid(12);
+  const rows = (await sql`
+    insert into files (id, evaluation_step_id, evaluation_id, customer_id, url, name, size_bytes)
+    values (${id}, ${args.evaluationStepId}, ${ctx[0].evaluation_id}, ${ctx[0].customer_id},
+            ${args.url}, ${args.name}, ${args.sizeBytes ?? null})
+    returning *`) as FileRow[];
+  return rows[0];
 }

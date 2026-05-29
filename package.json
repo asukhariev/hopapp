@@ -8,6 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "@tailwindcss/typography": "^0.5.19",
     "@vercel/blob": "^2.3.3",
     "material-symbols": "^0.44.9",

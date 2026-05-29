@@ -1,45 +1,80 @@
-export type SessionStatus =
-  | "pending_start"  // user clicked Start; runner hasn't picked up
-  | "recording"      // session is live — runner acked Start
-  | "pending_stop"   // user clicked Stop; runner hasn't picked up
-  | "exporting"      // runner driving MR4 Export -> CSV
-  | "uploading"      // runner uploading file to Vercel Blob
-  | "done"           // file URL available
-  | "failed";        // see `error`
+export type StepKind = "lab_runner" | "manual" | "http";
 
-export type Session = {
+export type StepStatus =
+  | "pending" // not reached yet
+  | "active" // current step (awaiting pickup or executing)
+  | "done"
+  | "failed"
+  | "skipped";
+
+export type EvaluationStatus = "in_progress" | "done" | "failed";
+
+export type Customer = {
   id: string;
-  device: "emg" | "video" | "insoles";
-  status: SessionStatus;
+  name: string;
+  external_ref: string | null;
   created_at: string;
   updated_at: string;
-  progress?: string;
-  file_url?: string;
-  file_name?: string;
-  file_size_bytes?: number;
-  error?: string;
 };
 
-export type RunnerCommand =
-  | { type: "start"; session_id: string; device: Session["device"] }
-  | { type: "stop"; session_id: string }
-  | { type: "noop" };
+export type Evaluation = {
+  id: string;
+  customer_id: string;
+  evaluation_type_id: string;
+  status: EvaluationStatus;
+  external_ref: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
-/**
- * Statuses where the runner is actively working — UI should show a spinner
- * and DISABLE both Start and Stop buttons.
- */
-export const BUSY_STATUSES: SessionStatus[] = [
-  "pending_start",
-  "pending_stop",
-  "exporting",
-  "uploading",
-];
+export type EvaluationStep = {
+  id: string;
+  evaluation_id: string;
+  step_definition_id: string;
+  seq: number;
+  kind: StepKind;
+  config: Record<string, unknown>;
+  instructions: string | null;
+  status: StepStatus;
+  progress: string | null;
+  result: Record<string, unknown> | null;
+  claimed_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
-/**
- * Statuses where the session is "live" — Stop button should be enabled,
- * Start disabled.
- */
-export const LIVE_STATUSES: SessionStatus[] = ["recording"];
+export type FileRow = {
+  id: string;
+  evaluation_step_id: string;
+  evaluation_id: string;
+  customer_id: string;
+  url: string;
+  name: string;
+  size_bytes: number | null;
+  created_at: string;
+};
 
-export const TERMINAL_STATUSES: SessionStatus[] = ["done", "failed"];
+/** Full view used by the evaluation screen. */
+export type EvaluationDetail = {
+  evaluation: Evaluation;
+  steps: EvaluationStep[];
+  files: FileRow[];
+};
+
+/** What the runner receives from /api/runner/poll. */
+export type RunnerJob =
+  | { type: "noop" }
+  | {
+      type: "step";
+      step_id: string;
+      evaluation_id: string;
+      action: string; // from step config, e.g. "mr4_export"
+      config: Record<string, unknown>;
+      instructions: string | null;
+    };
+
+export const ACTIVE_STEP_STATUS: StepStatus = "active";
+export const TERMINAL_STEP_STATUSES: StepStatus[] = ["done", "failed", "skipped"];
+export const TERMINAL_EVAL_STATUSES: EvaluationStatus[] = ["done", "failed"];
